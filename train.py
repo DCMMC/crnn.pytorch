@@ -13,9 +13,15 @@ from warpctc_pytorch import CTCLoss
 import os
 import utils
 import dataset
+import json
+# DCMMC: for get stroke count for chinese char
+# TODO: only support py2
+# from cjklib.characterlookup import CharacterLookup
 
 import models.crnn as crnn
 
+# DCMMC: for get stroke count for chinese char
+# cjk = CharacterLookup('C')
 parser = argparse.ArgumentParser()
 parser.add_argument('--trainRoot', required=True, help='path to dataset')
 parser.add_argument('--valRoot', required=True, help='path to dataset')
@@ -58,7 +64,7 @@ if torch.cuda.is_available() and not opt.cuda:
     print("WARNING: You have a CUDA device, so you should probably run with --cuda")
 
 # train_dataset = dataset.lmdbDataset(root=opt.trainroot)
-train_dataset = dataset.THUCNewsDataset(root=opt.trainroot)
+train_dataset = dataset.THUCNewsDataset(root=opt.trainroot, debug=True)
 assert train_dataset
 if not opt.random_sample:
     sampler = dataset.randomSequentialSampler(train_dataset, opt.batchSize)
@@ -73,6 +79,19 @@ train_loader = torch.utils.data.DataLoader(
 #     root=opt.valroot, transform=dataset.resizeNormalize((100, 32)))
 test_dataset = dataset.THUCNewsDataset(root=opt.valroot, mode='val')
 
+# DCMMC: alphabet from file
+if opt.alphabet.endswith('.json'):
+    with open(opt.alphabet, 'r') as f:
+        opt.alphabet = json.load(f)
+    if isinstance(opt.alphabet, dict):
+        opt.alphabet = opt.alphabet.keys()
+    assert isinstance(opt.alphabet, list)
+    # sort by stroke count
+    # opt.alphabet = [[c, cjk.getStrokeCount(c)] for c in opt.alphabet]
+    # opt.alphabet = sorted(opt.alphabet, key=lambda c: c[1])
+    # opt.alphabet = ''.join([c[0] for c in opt.alphabet])
+    opt.alphabet = ''.join(opt.alphabet)
+    print('First chars of alphabet:', opt.alphabet[:30])
 nclass = len(opt.alphabet) + 1
 nc = 1
 

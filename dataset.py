@@ -21,20 +21,24 @@ class THUCNewsDataset(Dataset):
     @mode train/val
     @train_ratio the ratio of training samples in the dataset
     '''
-    def __init__(self, root, mode='train', train_ratio=0.8):
+    def __init__(self, root, mode='train', train_ratio=0.8, debug=False):
         self.dataset = h5py.File(root, 'r')
         self.length = len(self.dataset)
         self.offset = 0 if mode == 'train' else int(self.length * train_ratio)
         self.size = int(self.length * train_ratio) if mode == 'train' else \
             (self.length - self.offset)
+        if debug:
+            self.length = 10000
+            self.offset = 0 if mode == 'train' else 8000
+            self.size = 8000 if mode == 'train' else 2000
 
     def __len__(self):
         return self.size
 
     def __getitem__(self, index):
         assert index <= len(self), 'index range error'
-        img = self.dataset[str(index)]['img'][...]
-        label = self.dataset[str(index)]['y'][...]
+        img = self.dataset[str(index + self.offset)]['img'][...]
+        label = str(self.dataset[str(index + self.offset)]['y'][...])
         return (img, label)
 
 
