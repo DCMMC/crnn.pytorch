@@ -72,6 +72,7 @@ class strLabelConverter(object):
             else:
                 char_list = []
                 for i in range(length):
+                    # DCMMC: greedy decode with blank id == 0
                     if t[i] != 0 and (not (i > 0 and t[i - 1] == t[i])):
                         char_list.append(self.alphabet[t[i] - 1])
                 return ''.join(char_list)

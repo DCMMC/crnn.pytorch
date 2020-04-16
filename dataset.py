@@ -11,6 +11,31 @@ import six
 import sys
 from PIL import Image
 import numpy as np
+import h5py
+
+
+class THUCNewsDataset(Dataset):
+    '''
+    A synthetic data generated from THUCNews
+    @root path of the h5 file
+    @mode train/val
+    @train_ratio the ratio of training samples in the dataset
+    '''
+    def __init__(self, root, mode='train', train_ratio=0.8):
+        self.dataset = h5py.File(root, 'r')
+        self.length = len(self.dataset)
+        self.offset = 0 if mode == 'train' else int(self.length * train_ratio)
+        self.size = int(self.length * train_ratio) if mode == 'train' else \
+            (self.length - self.offset)
+
+    def __len__(self):
+        return self.size
+
+    def __getitem__(self, index):
+        assert index <= len(self), 'index range error'
+        img = self.dataset[str(index)]['img'][...]
+        label = self.dataset[str(index)]['y'][...]
+        return (img, label)
 
 
 class lmdbDataset(Dataset):
