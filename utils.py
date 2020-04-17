@@ -132,7 +132,10 @@ def oneHot(v, v_length, nc):
 
 
 def loadData(v, data):
-    v.data.resize_(data.size()).copy_(data)
+    # DCMMC
+    # v.data.resize_(data.size()).copy_(data)
+    with torch.no_grad():
+        v.resize_(data.size()).copy_(data)
 
 
 def prettyPrint(v):

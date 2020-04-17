@@ -10,6 +10,10 @@ class BidirectionalLSTM(nn.Module):
         self.embedding = nn.Linear(nHidden * 2, nOut)
 
     def forward(self, input):
+        # DCMMC
+        # https://discuss.pytorch.org/t/why-do-we-need-flatten-parameters-when-using-rnn-with-dataparallel/46506
+        # For DataParallel when using multi-gpus
+        # self.rnn.flatten_parameters()
         recurrent, _ = self.rnn(input)
         T, b, h = recurrent.size()
         t_rec = recurrent.view(T * b, h)

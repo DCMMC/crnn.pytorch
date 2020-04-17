@@ -12,7 +12,10 @@ import numpy as np
 from warpctc_pytorch import CTCLoss
 import os
 import utils
-import dataset
+# import dataset
+from dataset import alignCollate
+from dataset import THUCNewsDataset
+from dataset import randomSequentialSampler
 import json
 # DCMMC: for get stroke count for chinese char
 # TODO: only support py2
@@ -64,27 +67,29 @@ if torch.cuda.is_available() and not opt.cuda:
     print("WARNING: You have a CUDA device, so you should probably run with --cuda")
 
 # train_dataset = dataset.lmdbDataset(root=opt.trainroot)
-train_dataset = dataset.THUCNewsDataset(root=opt.trainroot, debug=True)
+train_dataset = THUCNewsDataset(root=opt.trainRoot, debug=True)
 assert train_dataset
 if not opt.random_sample:
-    sampler = dataset.randomSequentialSampler(train_dataset, opt.batchSize)
+    sampler = randomSequentialSampler(train_dataset, opt.batchSize)
 else:
     sampler = None
 train_loader = torch.utils.data.DataLoader(
     train_dataset, batch_size=opt.batchSize,
-    shuffle=True, sampler=sampler,
+    shuffle=False, sampler=sampler,
     num_workers=int(opt.workers),
-    collate_fn=dataset.alignCollate(imgH=opt.imgH, imgW=opt.imgW, keep_ratio=opt.keep_ratio))
+    collate_fn=alignCollate(
+        imgH=opt.imgH, imgW=opt.imgW,
+        keep_ratio=opt.keep_ratio))
 # test_dataset = dataset.lmdbDataset(
 #     root=opt.valroot, transform=dataset.resizeNormalize((100, 32)))
-test_dataset = dataset.THUCNewsDataset(root=opt.valroot, mode='val')
+test_dataset = THUCNewsDataset(root=opt.valRoot, mode='val')
 
 # DCMMC: alphabet from file
 if opt.alphabet.endswith('.json'):
     with open(opt.alphabet, 'r') as f:
         opt.alphabet = json.load(f)
     if isinstance(opt.alphabet, dict):
-        opt.alphabet = opt.alphabet.keys()
+        opt.alphabet = list(opt.alphabet.keys())
     assert isinstance(opt.alphabet, list)
     # sort by stroke count
     # opt.alphabet = [[c, cjk.getStrokeCount(c)] for c in opt.alphabet]
@@ -122,7 +127,8 @@ length = torch.IntTensor(opt.batchSize)
 
 if opt.cuda:
     crnn.cuda()
-    crnn = torch.nn.DataParallel(crnn, device_ids=range(opt.ngpu))
+    if opt.ngpu > 1:
+        crnn = torch.nn.DataParallel(crnn, device_ids=range(opt.ngpu))
     image = image.cuda()
     criterion = criterion.cuda()
 
@@ -151,7 +157,10 @@ def val(net, dataset, criterion, max_iter=100):
 
     net.eval()
     data_loader = torch.utils.data.DataLoader(
-        dataset, shuffle=True, batch_size=opt.batchSize, num_workers=int(opt.workers))
+        dataset, shuffle=True, batch_size=opt.batchSize,
+        collate_fn=alignCollate(
+            imgH=opt.imgH, imgW=opt.imgW, keep_ratio=opt.keep_ratio),
+        num_workers=int(opt.workers))
     val_iter = iter(data_loader)
 
     i = 0
@@ -175,7 +184,6 @@ def val(net, dataset, criterion, max_iter=100):
         loss_avg.add(cost)
 
         _, preds = preds.max(2)
-        preds = preds.squeeze(2)
         preds = preds.transpose(1, 0).contiguous().view(-1)
         sim_preds = converter.decode(preds.data, preds_size.data, raw=False)
         for pred, target in zip(sim_preds, cpu_texts):
@@ -225,10 +233,10 @@ for epoch in range(opt.nepoch):
                   (epoch, opt.nepoch, i, len(train_loader), loss_avg.val()))
             loss_avg.reset()
 
-        if i % opt.valInterval == 0:
+        if i % opt.valInterval == 0 and (epoch + 1) % (opt.nepoch // 5) == 0:
             val(crnn, test_dataset, criterion)
 
         # do checkpointing
-        if i % opt.saveInterval == 0:
+        if i % opt.saveInterval == 0 and (epoch + 1) % (opt.nepoch // 5) == 0:
             torch.save(
                 crnn.state_dict(), '{0}/netCRNN_{1}_{2}.pth'.format(opt.expr_dir, epoch, i))

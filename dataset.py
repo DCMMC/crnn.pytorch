@@ -21,12 +21,16 @@ class THUCNewsDataset(Dataset):
     @mode train/val
     @train_ratio the ratio of training samples in the dataset
     '''
+
     def __init__(self, root, mode='train', train_ratio=0.8, debug=False):
         self.dataset = h5py.File(root, 'r')
         self.length = len(self.dataset)
         self.offset = 0 if mode == 'train' else int(self.length * train_ratio)
         self.size = int(self.length * train_ratio) if mode == 'train' else \
             (self.length - self.offset)
+        self.mode = mode
+        if mode == 'val':
+            self.toTensor = transforms.ToTensor()
         if debug:
             self.length = 10000
             self.offset = 0 if mode == 'train' else 8000
@@ -36,8 +40,11 @@ class THUCNewsDataset(Dataset):
         return self.size
 
     def __getitem__(self, index):
+        index = int(index.item()) if isinstance(index, torch.Tensor) else \
+            int(index)
         assert index <= len(self), 'index range error'
         img = self.dataset[str(index + self.offset)]['img'][...]
+        img = Image.fromarray(img)
         label = str(self.dataset[str(index + self.offset)]['y'][...])
         return (img, label)
 
@@ -121,7 +128,9 @@ class randomSequentialSampler(sampler.Sampler):
         index = torch.LongTensor(len(self)).fill_(0)
         for i in range(n_batch):
             random_start = random.randint(0, len(self) - self.batch_size)
-            batch_index = random_start + torch.range(0, self.batch_size - 1)
+            # DCMMC
+            # batch_index = random_start + torch.range(0, self.batch_size - 1)
+            batch_index = random_start + torch.arange(0, self.batch_size)
             index[i * self.batch_size:(i + 1) * self.batch_size] = batch_index
         # deal with tail
         if tail:

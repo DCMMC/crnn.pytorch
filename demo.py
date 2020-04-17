@@ -3,13 +3,17 @@ from torch.autograd import Variable
 import utils
 import dataset
 from PIL import Image
+import json
 
 import models.crnn as crnn
 
 
 model_path = './data/crnn.pth'
 img_path = './data/demo.png'
-alphabet = '0123456789abcdefghijklmnopqrstuvwxyz'
+# alphabet = '0123456789abcdefghijklmnopqrstuvwxyz'
+with open('../data_generated/dict_dataset.json') as f:
+    alphabet = json.load(f)
+    alphabet = ''.join(list(alphabet.keys()))
 
 model = crnn.CRNN(32, 1, 37, 256)
 if torch.cuda.is_available():
