@@ -9,7 +9,7 @@ import torchvision.transforms as transforms
 import lmdb
 import six
 import sys
-from PIL import Image
+from PIL import Image, ImageOps
 import numpy as np
 import h5py
 
@@ -32,9 +32,9 @@ class THUCNewsDataset(Dataset):
         if mode == 'val':
             self.toTensor = transforms.ToTensor()
         if debug:
-            self.length = 10000
-            self.offset = 0 if mode == 'train' else 8000
-            self.size = 8000 if mode == 'train' else 2000
+            self.length = 6400
+            self.offset = 0 if mode == 'train' else 5600
+            self.size = 5600 if mode == 'train' else 800
 
     def __len__(self):
         return self.size
@@ -46,6 +46,8 @@ class THUCNewsDataset(Dataset):
         img = self.dataset[str(index + self.offset)]['img'][...]
         img = Image.fromarray(img)
         label = str(self.dataset[str(index + self.offset)]['y'][...])
+        # remove \xa0, \u30000, whitespace...
+        label = ''.join(label.strip().split())
         return (img, label)
 
 
@@ -104,13 +106,20 @@ class lmdbDataset(Dataset):
 
 class resizeNormalize(object):
 
-    def __init__(self, size, interpolation=Image.BILINEAR):
+    def __init__(self, size, interpolation=Image.ANTIALIAS):
         self.size = size
         self.interpolation = interpolation
         self.toTensor = transforms.ToTensor()
 
     def __call__(self, img):
-        img = img.resize(self.size, self.interpolation)
+        # img = img.resize(self.size, self.interpolation)
+        # DCMMC: keep aspect ratio and padding with white
+        ratio = self.size[1] / img.size[1]
+        img.thumbnail([s * ratio for s in img.size], self.interpolation)
+        delta_w = self.size[0] - img.size[0]
+        img = ImageOps.expand(
+            img, (delta_w // 2, 0, delta_w - delta_w // 2, 0),
+            fill=255)
         img = self.toTensor(img)
         img.sub_(0.5).div_(0.5)
         return img
@@ -135,7 +144,8 @@ class randomSequentialSampler(sampler.Sampler):
         # deal with tail
         if tail:
             random_start = random.randint(0, len(self) - self.batch_size)
-            tail_index = random_start + torch.range(0, tail - 1)
+            # tail_index = random_start + torch.range(0, tail - 1)
+            tail_index = random_start + torch.arange(0, tail)
             index[(i + 1) * self.batch_size:] = tail_index
 
         return iter(index)
@@ -146,7 +156,7 @@ class randomSequentialSampler(sampler.Sampler):
 
 class alignCollate(object):
 
-    def __init__(self, imgH=32, imgW=100, keep_ratio=False, min_ratio=1):
+    def __init__(self, imgH=32, imgW=100, keep_ratio=True, min_ratio=1):
         self.imgH = imgH
         self.imgW = imgW
         self.keep_ratio = keep_ratio
@@ -157,17 +167,17 @@ class alignCollate(object):
 
         imgH = self.imgH
         imgW = self.imgW
-        if self.keep_ratio:
-            ratios = []
-            for image in images:
-                w, h = image.size
-                ratios.append(w / float(h))
-            ratios.sort()
-            max_ratio = ratios[-1]
-            imgW = int(np.floor(max_ratio * imgH))
-            imgW = max(imgH * self.min_ratio, imgW)  # assure imgH >= imgW
-
-        transform = resizeNormalize((imgW, imgH))
+        ratios = []
+        for image in images:
+            w, h = image.size
+            ratios.append(w / float(h))
+        # ratios.sort()
+        # max_ratio = ratios[-1]
+        # imgW = int(np.floor(max_ratio * imgH))
+        # imgW = max(imgH * self.min_ratio, imgW)  # assure imgH >= imgW
+        max_ratio = max(ratios)
+        imgW_new = int(np.ceil(max_ratio * imgH))
+        transform = resizeNormalize((imgW_new, imgH))
         images = [transform(image) for image in images]
         images = torch.cat([t.unsqueeze(0) for t in images], 0)
 

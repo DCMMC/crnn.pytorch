@@ -99,6 +99,7 @@ if opt.alphabet.endswith('.json'):
     opt.alphabet = ''.join(opt.alphabet)
     print('First chars of alphabet:', opt.alphabet[:30])
 nclass = len(opt.alphabet) + 1
+# grayimage
 nc = 1
 
 converter = utils.strLabelConverter(opt.alphabet)
@@ -119,28 +120,41 @@ crnn = crnn.CRNN(opt.imgH, nc, nclass, opt.nh)
 crnn.apply(weights_init)
 if opt.pretrained != '':
     print('loading pretrained model from %s' % opt.pretrained)
-    crnn.load_state_dict(torch.load(opt.pretrained))
+    # DCMMC: encounter with DataParallel
+    # https://discuss.pytorch.org/t/solved-keyerror-unexpected-key-module-encoder-embedding-weight-in-state-dict/1686/3
+    # original saved file with DataParallel
+    state_dict = torch.load(opt.pretrained)
+    # create new OrderedDict that does not contain `module.`
+    from collections import OrderedDict
+    new_state_dict = OrderedDict()
+    for k, v in state_dict.items():
+        name = k[7:] if k.startswith('modules.') else k # remove `module.`
+        new_state_dict[name] = v
+        # load params
+    crnn.load_state_dict(new_state_dict)
+    # crnn.load_state_dict(torch.load(opt.pretrained))
 print(crnn)
 
-image = torch.FloatTensor(opt.batchSize, 3, opt.imgH, opt.imgH)
-text = torch.IntTensor(opt.batchSize * 5)
-length = torch.IntTensor(opt.batchSize)
+device = torch.device("cuda:0")
+# image = torch.FloatTensor(opt.batchSize, 1, opt.imgH, opt.imgH)
+# text = torch.IntTensor(opt.batchSize * 5)
+# length = torch.IntTensor(opt.batchSize)
 
 if opt.cuda:
     crnn.cuda()
     if opt.ngpu > 1:
         crnn = torch.nn.DataParallel(crnn, device_ids=range(opt.ngpu))
-    image = image.cuda()
+    # image = image.cuda()
     criterion = criterion.cuda()
 
-image = Variable(image)
-text = Variable(text)
-length = Variable(length)
+# image = Variable(image)
+# text = Variable(text)
+# length = Variable(length)
 
 # loss averager
 loss_avg = utils.averager()
 # distance averager
-distance_avg = utils.averager()
+distance_avg = 0.
 
 # setup optimizer
 if opt.adam:
@@ -164,21 +178,38 @@ def levenshtein_distance_norm(str1, str2):
 def evalBatch(net, criterion):
     data = train_iter.next()
     cpu_images, cpu_texts = data
+    print('cpu_images', cpu_images.size())
+    print('cpu_texts', len(cpu_texts), max([len(i) for i in cpu_texts]))
+    print(sorted(list(enumerate(cpu_texts)), key=lambda x: len(x[1]))[-1])
     batch_size = cpu_images.size(0)
-    utils.loadData(image, cpu_images)
-    t, l = converter.encode(cpu_texts)
-    utils.loadData(text, t)
-    utils.loadData(length, l)
+    # utils.loadData(image, cpu_images)
+    text, length = converter.encode(cpu_texts)
+    # t, l = converter.encode(cpu_texts)
+    # utils.loadData(text, t)
+    # utils.loadData(length, l)
+    image = cpu_images.to(device)
+    # text = text.to(device)
+    # length = length.to(device)
 
+    # print('image:', image.size())
     preds = crnn(image)
-    _, preds = preds.max(2)
-    preds = preds.transpose(1, 0).contiguous().view(-1)
-    preds_size = Variable(torch.IntTensor([preds.size(0)] * batch_size))
+    # print('shape, size of preds:', preds.shape)
+    # preds_size = Variable(torch.IntTensor([preds.size(0)] * batch_size))
+    preds_size = torch.IntTensor([preds.size(0)] * batch_size)
     loss = criterion(preds, text, preds_size, length) / batch_size
+    _, preds = preds.max(2)
+    # print('shape, size of preds:', preds.shape)
+    preds = preds.transpose(1, 0).contiguous().view(-1)
+    # print('shape, size of flatten preds:', preds.shape)
     sim_preds = converter.decode(preds.data, preds_size.data, raw=False)
     distance = 0.
+    cnt = 0
     for pred, target in zip(sim_preds, cpu_texts):
         distance += levenshtein_distance_norm(pred, target)
+        if cnt < 1:
+            print('pred:\n{}\ntrue:\n{}\n'.format(pred, target))
+            print('*'*50)
+            cnt += 1
     distance /= len(sim_preds)
     return loss, distance
 
@@ -190,12 +221,12 @@ while i < len(train_loader):
         p.requires_grad = False
     crnn.eval()
 
-    cost, distance = evalBatch(crnn, criterion, optimizer)
+    cost, distance = evalBatch(crnn, criterion)
     loss_avg.add(cost)
-    distance_avg.add(distance)
+    distance_avg += distance
     i += 1
 
     if i % opt.displayInterval == 0:
-        print('[%d/%d] Loss: %f, distance: ' %
-              (i, len(train_loader), loss_avg.val(), distance_avg.val()))
+        print('[%d/%d] Loss: %f, distance: %f' %
+              (i, len(train_loader), loss_avg.val(), distance_avg / i))
         # loss_avg.reset()

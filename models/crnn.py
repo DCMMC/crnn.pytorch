@@ -6,20 +6,24 @@ class BidirectionalLSTM(nn.Module):
     def __init__(self, nIn, nHidden, nOut):
         super(BidirectionalLSTM, self).__init__()
 
-        self.rnn = nn.LSTM(nIn, nHidden, bidirectional=True)
+        # DataParallell only support batch_first = True
+        self.rnn = nn.LSTM(nIn, nHidden, bidirectional=True, batch_first=True)
         self.embedding = nn.Linear(nHidden * 2, nOut)
 
     def forward(self, input):
         # DCMMC
         # https://discuss.pytorch.org/t/why-do-we-need-flatten-parameters-when-using-rnn-with-dataparallel/46506
         # For DataParallel when using multi-gpus
-        # self.rnn.flatten_parameters()
+        self.rnn.flatten_parameters()
         recurrent, _ = self.rnn(input)
-        T, b, h = recurrent.size()
-        t_rec = recurrent.view(T * b, h)
+        # T, b, h = recurrent.size()
+        b, T, h = recurrent.size()
+        # t_rec = recurrent.view(T * b, h)
+        t_rec = recurrent.reshape([T * b, h])
 
         output = self.embedding(t_rec)  # [T * b, nOut]
-        output = output.view(T, b, -1)
+        # output = output.view(T, b, -1)
+        output = output.reshape([b, T, -1])
 
         return output
 
@@ -75,7 +79,8 @@ class CRNN(nn.Module):
         b, c, h, w = conv.size()
         assert h == 1, "the height of conv must be 1"
         conv = conv.squeeze(2)
-        conv = conv.permute(2, 0, 1)  # [w, b, c]
+        # conv = conv.permute(2, 0, 1)  # [w, b, c]
+        conv = conv.permute(0, 2, 1)  # [b, w, c]
 
         # rnn features
         output = self.rnn(conv)

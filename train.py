@@ -82,7 +82,7 @@ train_loader = torch.utils.data.DataLoader(
         keep_ratio=opt.keep_ratio))
 # test_dataset = dataset.lmdbDataset(
 #     root=opt.valroot, transform=dataset.resizeNormalize((100, 32)))
-test_dataset = THUCNewsDataset(root=opt.valRoot, mode='val')
+test_dataset = THUCNewsDataset(root=opt.valRoot, mode='val', debug=True)
 
 # DCMMC: alphabet from file
 if opt.alphabet.endswith('.json'):
@@ -121,7 +121,7 @@ if opt.pretrained != '':
     crnn.load_state_dict(torch.load(opt.pretrained))
 print(crnn)
 
-image = torch.FloatTensor(opt.batchSize, 3, opt.imgH, opt.imgH)
+image = torch.FloatTensor(opt.batchSize, 1, opt.imgH, opt.imgH)
 text = torch.IntTensor(opt.batchSize * 5)
 length = torch.IntTensor(opt.batchSize)
 
@@ -174,17 +174,20 @@ def val(net, dataset, criterion, max_iter=100):
         cpu_images, cpu_texts = data
         batch_size = cpu_images.size(0)
         utils.loadData(image, cpu_images)
-        t, l = converter.encode(cpu_texts)
+        t, len_ = converter.encode(cpu_texts)
         utils.loadData(text, t)
-        utils.loadData(length, l)
+        utils.loadData(length, len_)
 
         preds = crnn(image)
-        preds_size = Variable(torch.IntTensor([preds.size(0)] * batch_size))
+        # preds_size = Variable(torch.IntTensor([preds.size(0)] * batch_size))
+        preds_size = Variable(torch.IntTensor([preds.size(1)] * batch_size))
+        preds = preds.transpose(1, 0)
         cost = criterion(preds, text, preds_size, length) / batch_size
         loss_avg.add(cost)
 
         _, preds = preds.max(2)
-        preds = preds.transpose(1, 0).contiguous().view(-1)
+        # preds = preds.transpose(1, 0).contiguous().view(-1)
+        preds = preds.view(-1)
         sim_preds = converter.decode(preds.data, preds_size.data, raw=False)
         for pred, target in zip(sim_preds, cpu_texts):
             if pred == target.lower():
@@ -203,12 +206,14 @@ def trainBatch(net, criterion, optimizer):
     cpu_images, cpu_texts = data
     batch_size = cpu_images.size(0)
     utils.loadData(image, cpu_images)
-    t, l = converter.encode(cpu_texts)
+    t, len_ = converter.encode(cpu_texts)
     utils.loadData(text, t)
-    utils.loadData(length, l)
+    utils.loadData(length, len_)
 
     preds = crnn(image)
-    preds_size = Variable(torch.IntTensor([preds.size(0)] * batch_size))
+    # preds_size = Variable(torch.IntTensor([preds.size(0)] * batch_size))
+    preds_size = Variable(torch.IntTensor([preds.size(1)] * batch_size))
+    preds = preds.transpose(1, 0)
     cost = criterion(preds, text, preds_size, length) / batch_size
     crnn.zero_grad()
     cost.backward()
@@ -233,10 +238,13 @@ for epoch in range(opt.nepoch):
                   (epoch, opt.nepoch, i, len(train_loader), loss_avg.val()))
             loss_avg.reset()
 
-        if i % opt.valInterval == 0 and (epoch + 1) % (opt.nepoch // 5) == 0:
+        if i % opt.valInterval == 0 and (epoch + 1) % (opt.nepoch // 40) == 0:
+        # if i % opt.valInterval == 0:
             val(crnn, test_dataset, criterion)
 
         # do checkpointing
-        if i % opt.saveInterval == 0 and (epoch + 1) % (opt.nepoch // 5) == 0:
+        if i % opt.saveInterval == 0 and (epoch + 1) % (opt.nepoch // 40) == 0:
             torch.save(
-                crnn.state_dict(), '{0}/netCRNN_{1}_{2}.pth'.format(opt.expr_dir, epoch, i))
+                crnn.state_dict() if opt.ngpu == 1 else crnn.module.state_dict(),
+                '{0}/netCRNN_{1}_{2}.pth'.format(opt.expr_dir, epoch, i)
+            )
